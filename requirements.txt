@@ -1,0 +1,11 @@
+# Geometry engine
+shapely>=2.0      # robust polygon offsetting, boolean ops, island handling
+ezdxf>=1.1        # DXF parsing
+svgelements>=1.9  # SVG parsing with transform reification
+
+# UI (later step)
+customtkinter>=5.2
+matplotlib>=3.8
+
+# NOTE: Shapely 2.x ships binary wheels for CPython 3.9-3.13.
+# Python 3.14 wheels may not exist yet; a 3.11/3.12 venv is recommended.
