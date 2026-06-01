@@ -47,7 +47,13 @@ Core dependencies (`requirements.txt`):
 
 ## Setup & running
 
+Works on **macOS, Linux, and Windows** — all dependencies are cross-platform.
+The only difference is the virtualenv layout and how environment variables are
+set on the command line.
+
 ### SVG / DXF (pip virtualenv)
+
+**macOS / Linux**
 
 ```bash
 python3.12 -m venv .venv
@@ -55,10 +61,29 @@ python3.12 -m venv .venv
 PYTHONPATH=src ./.venv/bin/python -m osxcam.main
 ```
 
+**Windows (PowerShell)**
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+$env:PYTHONPATH = "src"; .venv\Scripts\python -m osxcam.main
+```
+
+**Windows (cmd.exe)**
+
+```cmd
+py -3.12 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+set PYTHONPATH=src && .venv\Scripts\python -m osxcam.main
+```
+
 ### STEP import (conda)
 
 STEP import needs `pythonocc-core`, which is only available via conda (not pip
-or Homebrew). Create a conda env and run from it:
+or Homebrew). It's available for macOS, Linux, and Windows on conda-forge.
+Create a conda env and run from it:
+
+**macOS / Linux**
 
 ```bash
 conda create -n osxcam python=3.11
@@ -68,13 +93,29 @@ pip install -r requirements.txt
 PYTHONPATH=src python -m osxcam.main
 ```
 
+**Windows (PowerShell / Anaconda Prompt)**
+
+```powershell
+conda create -n osxcam python=3.11
+conda activate osxcam
+conda install -c conda-forge pythonocc-core=7.9.0
+pip install -r requirements.txt
+$env:PYTHONPATH = "src"; python -m osxcam.main
+```
+
 ## Tests
 
 A smoke suite exercises the geometry engine, loaders, G-code, feeds/speeds, and
 cut rating:
 
 ```bash
+# macOS / Linux
 PYTHONPATH=src python tests/smoke_engine.py
+```
+
+```powershell
+# Windows (PowerShell)
+$env:PYTHONPATH = "src"; python tests/smoke_engine.py
 ```
 
 ## Project layout
