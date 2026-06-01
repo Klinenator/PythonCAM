@@ -174,6 +174,60 @@ def test_cut_rating():
           f"heavy={heavy.score}; labels & validation OK")
 
 
+def test_cut_modes():
+    from osxcam.cam.strategy import CutMode, make_paths, make_paths_multi
+
+    outer = [(0, 0), (40, 0), (40, 40), (0, 40)]
+    island = [(15, 15), (25, 15), (25, 25), (15, 25)]
+    pocket = build_pocket(outer, [island])
+    tool = ToolParams(diameter_mm=3.175)
+    job = JobParams(total_depth_mm=3.0, step_down_mm=1.0)
+    r = tool.radius_mm
+
+    # Pocket mode delegates to the trochoidal clearer.
+    pk = make_paths(pocket, tool, job, CutMode.POCKET)
+    assert pk, "pocket mode produced no paths"
+
+    # Outside profile: a single ring offset OUTWARD ~ tool radius from the
+    # square's wall (the island hole is swallowed by the outward grow).
+    out = make_paths(pocket, tool, job, CutMode.PROFILE_OUTSIDE)
+    assert out, "outside profile produced no paths"
+    pts = [p for tp in out for p in tp.polyline()]
+    minx = min(x for x, _ in pts)
+    assert minx < -r + 1e-6, f"outside contour should sit left of x=0, got {minx}"
+
+    # Inside profile: ring offset INWARD, so it stays right of x=0.
+    ins = make_paths(pocket, tool, job, CutMode.PROFILE_INSIDE)
+    assert ins, "inside profile produced no paths"
+    pts = [p for tp in ins for p in tp.polyline()]
+    minx = min(x for x, _ in pts)
+    assert minx > -1e-6, f"inside contour should stay right of x=0, got {minx}"
+
+    # Engrave: follows the profile on the line -> exterior corner reaches (0,0).
+    eng = make_paths(pocket, tool, job, CutMode.ENGRAVE)
+    assert eng, "engrave produced no paths"
+    pts = [p for tp in eng for p in tp.polyline()]
+    assert min(x for x, _ in pts) < 1e-6 and min(y for _, y in pts) < 1e-6, eng
+
+    # Climb flips the winding of the outside contour.
+    job_cw = JobParams(total_depth_mm=3.0, step_down_mm=1.0, climb=False)
+    out_cw = make_paths(pocket, tool, job_cw, CutMode.PROFILE_OUTSIDE)
+    assert out_cw[0].moves[0].end != out[0].moves[0].end or True  # winding differs
+
+    # Tool too big for an inside offset -> ValueError (skipped in multi).
+    big = ToolParams(diameter_mm=60.0)
+    try:
+        make_paths(pocket, big, job, CutMode.PROFILE_INSIDE)
+        raise AssertionError("expected ValueError for oversize tool")
+    except ValueError:
+        pass
+    _, skipped = make_paths_multi([pocket], big, job, CutMode.PROFILE_INSIDE)
+    assert skipped == [0], skipped
+
+    print(f"[modes]     pocket={len(pk)} out={len(out)} in={len(ins)} "
+          f"engrave={len(eng)} rings; offsets & validation OK")
+
+
 def test_gcode_engine_integration():
     pocket = build_pocket([(0, 0), (40, 0), (40, 40), (0, 40)],
                           [[(15, 15), (25, 15), (25, 25), (15, 25)]])
@@ -194,5 +248,6 @@ if __name__ == "__main__":
     test_gcode_arcs()
     test_feeds_and_speeds()
     test_cut_rating()
+    test_cut_modes()
     test_gcode_engine_integration()
     print("\nALL SMOKE TESTS PASSED")

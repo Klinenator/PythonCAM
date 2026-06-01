@@ -299,12 +299,40 @@ class Part3DView(_SimClock, ctk.CTkFrame):
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
         self._style()
 
+        # mplot3d rotates on drag but has no built-in scroll zoom; wire one up.
+        self.canvas.mpl_connect("scroll_event", self._on_scroll)
+        self._box_aspect = None   # (dx, dy, dz) set by draw()
+        self._zoom = 1.0          # camera zoom multiplier driven by scrolling
+
         # Simulation state (see _SimClock / simulate()).
         self._sim_after: str | None = None
         self._sim_line = None
         self._sim_tool = None
         self._sim_on_tick = None
         self._sim_on_done = None
+
+    # ---- interaction ---------------------------------------------------
+    def _apply_zoom(self) -> None:
+        if self._box_aspect is None:
+            return
+        try:
+            # zoom > 1 enlarges the whole scene (box + part), unlike rescaling
+            # the limits which just grows the part inside a fixed box.
+            self.ax.set_box_aspect(self._box_aspect, zoom=self._zoom)
+        except TypeError:
+            self.ax.set_box_aspect(self._box_aspect)  # matplotlib < 3.6
+
+    def _on_scroll(self, event) -> None:
+        """Scroll wheel / two-finger scroll zooms the camera in and out.
+
+        ``event.step`` is positive scrolling up (zoom in) and carries the
+        trackpad magnitude. The zoom multiplier persists until the next redraw.
+        """
+        if event.inaxes is not self.ax:
+            return
+        self._zoom = max(0.2, min(8.0, self._zoom * 1.2 ** event.step))
+        self._apply_zoom()
+        self.canvas.draw_idle()
 
     def _style(self) -> None:
         ax = self.ax
@@ -387,11 +415,9 @@ class Part3DView(_SimClock, ctk.CTkFrame):
         self.ax.set_xlim(x0, x1)
         self.ax.set_ylim(y0, y1)
         self.ax.set_zlim(-th, 0.0)
-        try:
-            self.ax.set_box_aspect(((x1 - x0) or 1.0, (y1 - y0) or 1.0,
-                                    th or 1.0))
-        except Exception:
-            pass
+        self._box_aspect = ((x1 - x0) or 1.0, (y1 - y0) or 1.0, th or 1.0)
+        self._zoom = 1.0          # fresh scene starts fit-to-view
+        self._apply_zoom()
         self.canvas.draw_idle()
 
     # ---- simulation ----------------------------------------------------

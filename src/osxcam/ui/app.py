@@ -15,13 +15,15 @@ from shapely.affinity import translate
 from shapely.geometry import Polygon
 
 from .canvas import Part3DView, ToolpathCanvas
-from ..cam.adaptive import clear_pocket, clear_pockets, estimate_moves
+from ..cam.adaptive import estimate_moves
 from ..cam.feeds import (DEFAULT_RPM_MAX, MATERIALS, TOOL_MATERIALS,
                          rate_cut, recommend)
 from ..cam.params import JobParams, StockParams, ToolParams
+from ..cam.strategy import CutMode, make_paths, make_paths_multi
 from ..cam.toolpath import Toolpath
 from ..gcode.generator import FILE_EXT, write_gcode_file
 from ..io.loader import load_file
+from ..io.step_parser import step_available
 
 # Above this estimated move count a job is slow to compute and preview; warn the
 # user first since it almost always means a too-small tool or a wrong import scale.
@@ -113,7 +115,11 @@ class App(ctk.CTk):
         panel = ctk.CTkScrollableFrame(self, width=300, label_text="CAM Parameters")
         panel.grid(row=0, column=0, sticky="ns", padx=10, pady=10)
 
-        ctk.CTkButton(panel, text="Open SVG / DXF…",
+        # STEP only works in the conda runtime (pythonocc-core); advertise it
+        # in the button only when it's actually importable here.
+        open_label = ("Open SVG / DXF / STEP…" if step_available()
+                      else "Open SVG / DXF…")
+        ctk.CTkButton(panel, text=open_label,
                       command=self._on_open).pack(fill="x", pady=(4, 2))
         self.file_label = ctk.CTkLabel(panel, text="(no file)", text_color="#888")
         self.file_label.pack(fill="x")
@@ -134,6 +140,13 @@ class App(ctk.CTk):
         self.shape_menu = ctk.CTkOptionMenu(panel, values=["—"],
                                             command=self._on_shape)
         self.shape_menu.pack(fill="x")
+
+        ctk.CTkLabel(panel, text="Cut mode").pack(anchor="w", pady=(8, 0))
+        self.cut_mode = ctk.CTkOptionMenu(
+            panel, values=[m.value for m in CutMode],
+            command=self._on_cut_mode)
+        self.cut_mode.set(CutMode.POCKET.value)
+        self.cut_mode.pack(fill="x")
 
         self.center_btn = ctk.CTkButton(panel, text="Center on stock",
                                         command=self._on_center)
@@ -270,6 +283,22 @@ class App(ctk.CTk):
             return self.shapes
         return [self.pocket] if self.pocket is not None else []
 
+    def _current_mode(self) -> CutMode:
+        try:
+            return CutMode(self.cut_mode.get())
+        except (ValueError, AttributeError):
+            return CutMode.POCKET
+
+    def _on_cut_mode(self, _value: str) -> None:
+        # Changing strategy invalidates any generated path.
+        self.paths = None
+        self.export_btn.configure(state="disabled")
+        self.sim_btn.configure(state="disabled", text="Simulate cut")
+        self.canvas.draw_scene(self._outlines(), None, self.stock)
+        self._refresh_3d_if_active()
+        self._set_status(f"Cut mode: {self._current_mode().value}. "
+                         "Generate to preview.")
+
     def _total_depth_mm(self) -> float:
         try:
             return float(self.entries["total_depth"].get())
@@ -391,6 +420,7 @@ class App(ctk.CTk):
         self.stock = stock
         self.job = job
         self.tool = tool
+        mode = self._current_mode()
         all_mode = self._machine_all()
         targets = list(self.shapes) if all_mode else [self.pocket]
 
@@ -401,10 +431,11 @@ class App(ctk.CTk):
         fit_warn = ("  ⚠ part extends beyond stock"
                     if not stock.contains_bounds(minx, miny, maxx, maxy) else "")
 
-        # Pre-flight size guard: a tiny tool relative to the part (or a part that
-        # imported at the wrong scale) explodes the loop count into minutes of
-        # compute. Catch it cheaply and let the user fix inputs before churning.
-        est = estimate_moves(targets, tool, job)
+        # Pre-flight size guard (pocket clearing only): a tiny tool relative to
+        # the part (or a wrong import scale) explodes the loop count into minutes
+        # of compute. Contour modes trace a boundary -- always cheap -- so skip
+        # the guard for them. Catch it cheaply and let the user fix inputs first.
+        est = estimate_moves(targets, tool, job) if mode is CutMode.POCKET else 0
         if est > WARN_MOVES:
             proceed = messagebox.askyesno(
                 "Very large toolpath",
@@ -422,15 +453,15 @@ class App(ctk.CTk):
                 return
 
         self.gen_btn.configure(state="disabled", text="Generating…")
-        self._set_status("Computing trochoidal toolpath…")
+        self._set_status(f"Computing {mode.value} toolpath…")
         self._fit_warn = fit_warn
 
         def work():
             try:
                 if all_mode:
-                    paths, skipped = clear_pockets(targets, tool, job)
+                    paths, skipped = make_paths_multi(targets, tool, job, mode)
                 else:
-                    paths, skipped = clear_pocket(targets[0], tool, job), []
+                    paths, skipped = make_paths(targets[0], tool, job, mode), []
                 self.after(0, lambda: self._done(paths, job, skipped))
             except Exception as exc:
                 # bind exc as a default arg: the `as exc` name is cleared when
@@ -449,15 +480,22 @@ class App(ctk.CTk):
         self.sim_btn.configure(state="normal" if paths else "disabled",
                                text="Simulate cut")
 
+        mode = self._current_mode()
         if not paths:
-            # nothing generated: the pocket is too narrow for tool + loop radius
-            loop_r = job.loop_radius(self.tool) if self.tool else 0.0
-            self._set_status(
-                f"No toolpath — pocket too narrow for this tool. Needs width "
-                f"≳ {2 * self.tool.radius_mm + 2 * loop_r:.2f} mm "
-                f"(tool {self.tool.diameter_mm} mm + loop radius {loop_r:.2f} "
-                f"mm). Try a smaller tool, a smaller loop radius, or check the "
-                f"import scale.", error=True)
+            if mode is CutMode.POCKET:
+                # nothing generated: pocket too narrow for tool + loop radius
+                loop_r = job.loop_radius(self.tool) if self.tool else 0.0
+                self._set_status(
+                    f"No toolpath — pocket too narrow for this tool. Needs width "
+                    f"≳ {2 * self.tool.radius_mm + 2 * loop_r:.2f} mm "
+                    f"(tool {self.tool.diameter_mm} mm + loop radius {loop_r:.2f} "
+                    f"mm). Try a smaller tool, a smaller loop radius, or check the "
+                    f"import scale.", error=True)
+            else:
+                self._set_status(
+                    f"No toolpath — the tool ({self.tool.diameter_mm} mm) is too "
+                    f"large for this profile offset, or the shape is too small. "
+                    f"Try a smaller tool or check the import scale.", error=True)
             return
 
         warn = getattr(self, "_fit_warn", "")
@@ -474,7 +512,8 @@ class App(ctk.CTk):
             rate = f"  Cut: {rating.label} ({rating.score}/100)."
         except (ValueError, AttributeError):
             pass
-        self._set_status(f"{len(paths)} guide rings, {moves} moves, "
+        unit = "guide rings" if mode is CutMode.POCKET else "contours"
+        self._set_status(f"{len(paths)} {unit}, {moves} moves, "
                          f"{len(job.z_layers())} Z layer(s).{skip}{rate}{warn}",
                          error=bool(warn or skipped))
         self._refresh_3d_if_active()

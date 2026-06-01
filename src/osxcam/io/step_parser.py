@@ -41,6 +41,16 @@ def _require_occ():
         raise ImportError(PYOCC_HINT) from exc
 
 
+def step_available() -> bool:
+    """True if pythonocc-core is importable, i.e. STEP import will work in this
+    runtime (the conda env). Lets the UI advertise STEP only when usable."""
+    try:
+        import OCC.Core  # noqa: F401
+        return True
+    except ImportError:  # pragma: no cover - depends on env
+        return False
+
+
 def _discretize_wire(wire, deflection: float, scale: float) -> list[Point]:
     """Ordered XY points around a wire, honouring edge orientation."""
     from OCC.Core.BRepAdaptor import BRepAdaptor_Curve

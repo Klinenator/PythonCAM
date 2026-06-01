@@ -12,6 +12,12 @@ router.
 
 - **Import** SVG, DXF, and STEP profiles (STEP requires the conda runtime — see
   below).
+- **Selectable cut modes** — pick a machining strategy per job:
+  - *Pocket (adaptive)* — trochoidal area clearing (below).
+  - *Profile — outside* — contour offset outward by the tool radius (cut a part
+    free from stock).
+  - *Profile — inside* — contour offset inward (cut a hole/window to size).
+  - *Engrave (on line)* — follow the profile centerline with no offset.
 - **Trochoidal adaptive clearing** with nested guide rings, climb/conventional
   selection, and auto-fit loop radius for small pockets.
 - **Helical plunge entry** (configurable ramp angle) instead of straight
@@ -122,7 +128,7 @@ $env:PYTHONPATH = "src"; python tests/smoke_engine.py
 
 ```
 src/osxcam/
-  cam/        feeds & speeds, params, trochoid orchestration, toolpaths
+  cam/        feeds & speeds, params, cut-mode strategies, toolpaths
   geometry/   region offsetting, guide rings, trochoidal path generation
   gcode/      GRBL post-processor
   io/         file loaders (SVG/DXF/STEP)
